@@ -19,6 +19,35 @@ set(SOURCES
     src/openclaw_client.cpp
 )
 
+# ========================================
+# Android 交叉编译支持
+# ========================================
+
+# 设置 Android NDK 路径
+set(ANDROID_NDK_ROOT "$ENV{HOME}/android-ndk-r27d/android-ndk-r27d" CACHE PATH "Android NDK root")
+
+# Android 编译选项
+set(ANDROID_PLATFORM android-24)  # Android 7.0+
+set(ANDROID_ABI "arm64-v8a")     # ARM64 (aarch64)
+
+# 如果 NDK 路径存在，使用 Android 工具链
+if(EXISTS ${ANDROID_NDK_ROOT})
+    message(STATUS "Using Android NDK: ${ANDROID_NDK_ROOT}")
+    
+    # 设置 CMake 工具链文件
+    set(CMAKE_TOOLCHAIN_FILE "${ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake")
+    
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DANDROID -fPIC -ffunction-sections -fdata-sections")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Oz -fvisibility=hidden -fvisibility-inlines-hidden")
+    
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+    
+    message(STATUS "Android NDK configured for ABI: ${ANDROID_ABI}")
+else()
+    message(WARNING "Android NDK not found at: ${ANDROID_NDK_ROOT}")
+    message(STATUS "Building for host (Linux) instead")
+endif()
+
 # 静态库
 add_library(openclaw_client STATIC ${SOURCES})
 set_target_properties(openclaw_client PROPERTIES
@@ -46,4 +75,3 @@ endif()
 
 # 测试 (如果需要)
 enable_testing()
-# add_subdirectory(test)  # TODO: 添加测试
