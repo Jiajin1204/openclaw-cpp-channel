@@ -1,0 +1,13 @@
+{
+  "name": "@openclaw/cpp-channel",
+  "version": "1.0.0",
+  "description": "Unix Socket channel for C++ Native service integration",
+  "main": "index.ts",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  },
+  "keywords": ["openclaw", "channel", "cpp", "unix-socket"],
+  "author": "",
+  "license": "MIT"
+}
