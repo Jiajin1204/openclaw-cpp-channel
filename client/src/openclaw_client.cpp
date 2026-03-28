@@ -62,16 +62,23 @@ void OpenClawClient::connect(ConnectCallback callback) {
 void OpenClawClient::disconnect() {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    if (!connected_) {
+        return;  // 已经断开了
+    }
+    
     running_ = false;
     connected_ = false;
     
-    if (readThread_.joinable()) {
-        readThread_.join();
-    }
-    
+    // 先关闭 socket，唤醒阻塞的 read()
     if (sockfd_ >= 0) {
+        shutdown(sockfd_, SHUT_RDWR);  // 关闭读写，让 read() 返回
         close(sockfd_);
         sockfd_ = -1;
+    }
+    
+    // 然后等待线程结束
+    if (readThread_.joinable()) {
+        readThread_.join();
     }
     
     if (disconnectCallback_) {
@@ -79,13 +86,19 @@ void OpenClawClient::disconnect() {
     }
 }
 
-bool OpenClawClient::sendMessage(const std::string& from, const std::string& text) {
+bool OpenClawClient::sendMessage(const std::string& from, const std::string& text, int id) {
     Message msg;
     msg.type = "send";
     msg.from = from;
     msg.text = text;
-    msg.id = 1;  // TODO: 生成唯一 ID
+    msg.id = id;  // 使用传入的 ID
     
+    return sendRaw(encodeMessage(msg));
+}
+
+bool OpenClawClient::sendPing() {
+    Message msg;
+    msg.type = "ping";
     return sendRaw(encodeMessage(msg));
 }
 

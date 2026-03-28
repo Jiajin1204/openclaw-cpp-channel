@@ -41,7 +41,11 @@ public:
     
     ~OpenClawClient();
     
-    // 禁止拷贝
+    /**
+     * 发送心跳 (ping)
+     * @return 是否发送成功
+     */
+    bool sendPing();
     OpenClawClient(const OpenClawClient&) = delete;
     OpenClawClient& operator=(const OpenClawClient&) = delete;
     
@@ -60,9 +64,10 @@ public:
      * 发送消息给 OpenClaw (C++ -> OpenClaw)
      * @param from 发送者 ID
      * @param text 消息内容
+     * @param id 消息 ID (用于追踪)
      * @return 是否发送成功
      */
-    bool sendMessage(const std::string& from, const std::string& text);
+    bool sendMessage(const std::string& from, const std::string& text, int id = 1);
     
     /**
      * 收到 OpenClaw 回复的回调 (OpenClaw -> C++)

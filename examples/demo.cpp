@@ -16,24 +16,21 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <csignal>
 #include "openclaw_client.h"
 
 using namespace openclaw;
 
 std::atomic<bool> running(true);
 
-void printMenu() {
-    std::cout << "\n===== OpenClaw Demo =====" << std::endl;
-    std::cout << "1. 发送消息" << std::endl;
-    std::cout << "2. 发送带 ID 的消息" << std::endl;
-    std::cout << "3. 发送心跳" << std::endl;
-    std::cout << "4. 查看连接状态" << std::endl;
-    std::cout << "0. 退出" << std::endl;
-    std::cout << "======================" << std::endl;
-    std::cout << "选择: ";
+void signalHandler(int signal) {
+    running = false;
 }
 
 int main(int argc, char* argv[]) {
+    // 捕获 Ctrl+C
+    std::signal(SIGINT, signalHandler);
+    
     // 默认 socket 路径
     std::string socketPath = "/tmp/openclaw.sock";
     if (argc > 1) {
@@ -49,6 +46,7 @@ int main(int argc, char* argv[]) {
     // 设置回调
     client->onMessage([](const std::string& to, const std::string& text) {
         std::cout << "\n[收到回复] to=" << to << " text=" << text << std::endl;
+        std::cout << "\n选择: " << std::flush;
     });
     
     client->onDisconnect([]() {
@@ -75,16 +73,28 @@ int main(int argc, char* argv[]) {
     }
     
     // 简单菜单循环
-    int choice;
+    int choice = -1;
     int messageId = 1;
     
     while (running && client->isConnected()) {
-        printMenu();
+        std::cout << "\n===== OpenClaw Demo =====" << std::endl;
+        std::cout << "1. 发送消息" << std::endl;
+        std::cout << "2. 发送带 ID 的消息" << std::endl;
+        std::cout << "3. 发送心跳" << std::endl;
+        std::cout << "4. 查看连接状态" << std::endl;
+        std::cout << "0. 退出" << std::endl;
+        std::cout << "======================" << std::endl;
+        std::cout << "选择: " << std::flush;
         
         if (!(std::cin >> choice)) {
             std::cin.clear();
             std::cin.ignore(1000, '\n');
             continue;
+        }
+        
+        if (choice == 0) {
+            std::cout << "退出..." << std::endl;
+            break;
         }
         
         switch (choice) {
@@ -93,8 +103,9 @@ int main(int argc, char* argv[]) {
                 std::string text;
                 std::getline(std::cin >> std::ws, text);
                 
-                if (client->sendMessage("user1", text)) {
-                    std::cout << "消息已发送" << std::endl;
+                int id = messageId++;
+                if (client->sendMessage("user1", text, id)) {
+                    std::cout << "消息已发送 (id=" << id << ")" << std::endl;
                 } else {
                     std::cout << "发送失败" << std::endl;
                 }
@@ -105,29 +116,34 @@ int main(int argc, char* argv[]) {
                 std::string text;
                 std::getline(std::cin >> std::ws, text);
                 
-                // TODO: 使用自定义 ID
-                if (client->sendMessage("user1", text)) {
-                    std::cout << "消息已发送 (id=" << messageId++ << ")" << std::endl;
+                int id = messageId++;
+                if (client->sendMessage("user1", text, id)) {
+                    std::cout << "消息已发送 (id=" << id << ")" << std::endl;
+                } else {
+                    std::cout << "发送失败" << std::endl;
                 }
                 break;
             }
             case 3: {
                 std::cout << "发送心跳..." << std::endl;
-                // TODO: 实现 ping
+                if (client->sendPing()) {
+                    std::cout << "心跳已发送" << std::endl;
+                } else {
+                    std::cout << "发送失败" << std::endl;
+                }
                 break;
             }
             case 4: {
                 std::cout << "连接状态: " << (client->isConnected() ? "已连接" : "未连接") << std::endl;
                 break;
             }
-            case 0:
-                running = false;
-                break;
             default:
                 std::cout << "无效选择" << std::endl;
         }
     }
     
-    std::cout << "退出..." << std::endl;
+    std::cout << "关闭连接..." << std::endl;
+    client->disconnect();
+    std::cout << "退出完成" << std::endl;
     return 0;
 }
