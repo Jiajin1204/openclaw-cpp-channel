@@ -104,21 +104,7 @@ openclaw claw install jiajin1204/cpp-channel
   "channels": {
     "cpp-channel": {
       "enabled": true,
-      "socketPath": "/tmp/openclaw.sock",
-      "stream": true
-    }
-  },
-  "gateway": {
-    "auth": {
-      "mode": "token",
-      "token": "your-gateway-token"
-    },
-    "http": {
-      "endpoints": {
-        "chatCompletions": {
-          "enabled": true
-        }
-      }
+      "socketPath": "/tmp/openclaw.sock"
     }
   },
   "plugins": {
@@ -129,14 +115,14 @@ openclaw claw install jiajin1204/cpp-channel
 }
 ```
 
+> **注意**：其他配置（如 `gateway.auth`、`models` 等）是 OpenClaw 自身的配置，与本插件无关。你可以根据需要自行配置。
+
 #### 配置项说明
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `socketPath` | `/tmp/openclaw.sock` | Unix Socket 文件路径 |
 | `stream` | `true` | 是否启用流式输出 |
-| `gatewayUrl` | `http://127.0.0.1:18790` | Gateway 地址 |
-| `gatewayToken` | 空 | Gateway 认证 Token |
 
 #### 不同环境示例
 
