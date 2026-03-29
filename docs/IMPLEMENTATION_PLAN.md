@@ -1,21 +1,30 @@
 # cpp-channel 标准插件实现计划
 
-## 概述
+## 开发原则
 
-将 cpp-channel 从简化实现（HTTP 调用）升级为标准的 OpenClaw Channel Plugin，享受 OpenClaw 的会话管理、Token 压缩等功能。
-
-## 参考实现
-
-- **Telegram**: `extensions/telegram/src/channel.ts` - 最完整的参考
-- **Nostr**: `extensions/nostr/src/channel.ts` - 简化示例，重点关注 `dispatchInboundDirectDmWithRuntime`
+**增量原型开发** - 每个 Phase 完成后必须：
+1. 能正常运行并测试
+2. 保留简化版的核心功能
+3. 可以推送到 GitHub
+4. 不会破坏已有功能
 
 ---
 
-## 实现步骤
+## 开发步骤
 
-### Phase 1: 基础框架
+### Phase 1: 基础框架 ✅ (已有简化版本)
 
-#### Step 1.1: 更新插件入口
+**目标**: 保持现有功能可运行
+**验证**: `./chat` 能连接并通信
+
+---
+
+### Phase 2: messaging 接口 ⏳
+
+**目标**: 实现目标解析，不破坏现有功能
+**验证**: `./chat --debug` 能显示解析的 target
+
+#### Step 2.1: 更新插件入口
 
 ```typescript
 // plugin/index.ts
@@ -117,7 +126,21 @@ messaging: {
 
 ---
 
-### Phase 3: 核心接口 - inbound（消息接收）
+## Phase 验收标准
+
+每个 Phase 完成后必须满足：
+
+1. **功能可用** - 现有 `./chat` 客户端能正常运行
+2. **可测试** - 有明确的测试命令或输出
+3. **可回滚** - 如果出问题，简化版本仍能工作
+4. **已推送** - 每次完成都推送到 GitHub
+
+---
+
+### Phase 3: inbound（消息注入）⏳
+
+**目标**: 消息进入 OpenClaw 会话系统，享受历史管理
+**验证**: 多轮对话时 OpenClaw 能理解上下文（不再重复自我介绍）
 
 #### Step 3.1: 创建消息接收处理
 
@@ -181,11 +204,17 @@ export function startCppSocketServer(runtime: CppChannelRuntime) {
 }
 ```
 
+### Phase 4: outbound（消息发送）⏳
+
+**目标**: Agent 回复通过标准接口发送
+**验证**: `./chat` 能收到完整的 AI 回复
+
 ---
 
-### Phase 4: 核心接口 - outbound（消息发送）
+### Phase 5: 会话管理 ⏳
 
-#### Step 4.1: 实现 outbound 接口
+**目标**: OpenClaw 自动管理会话历史，Token 压缩
+**验证**: 长对话测试，确认上下文不会被截断
 
 ```typescript
 outbound: {
@@ -254,11 +283,10 @@ export function sendToCppSocket(to: string, text: string, mode: string) {
 }
 ```
 
----
+### Phase 6: 配置Schema ⏳
 
-### Phase 5: 会话管理集成
-
-#### Step 5.1: 实现会话路由
+**目标**: 完善配置，支持 UI 显示
+**验证**: `openclaw config show` 能看到 cpp-channel 配置
 
 ```typescript
 // plugin/src/session-route.ts
@@ -290,11 +318,10 @@ export function createCppChannelAllowlistResolver() {
 }
 ```
 
----
+### Phase 7: 测试与文档 ⏳
 
-### Phase 6: 配置Schema
-
-#### Step 6.1: 定义配置Schema
+**目标**: 完整测试覆盖，更新文档
+**验证**: 所有功能测试通过，文档更新
 
 ```typescript
 // plugin/src/config-schema.ts
@@ -380,26 +407,17 @@ test("multiple messages maintain conversation context", async () => {
 
 ```
 plugin/
-├── index.ts                    # 插件入口
-├── openclaw.plugin.json        # 插件清单
-├── package.json
+├── index.ts                    # 插件入口（当前已存在）
 ├── src/
-│   ├── channel.ts             # 主插件定义
-│   ├── runtime.ts            # Runtime 管理
-│   ├── types.ts              # 类型定义
-│   ├── config-schema.ts      # 配置Schema
-│   ├── config-helpers.ts      # 配置帮助函数
-│   ├── session-route.ts       # 会话路由
-│   ├── security.ts           # 安全策略
-│   ├── inbound-handler.ts    # 入站消息处理
-│   ├── outbound-adapter.ts    # 出站消息发送
-│   ├── socket-server.ts      # Socket 服务器
-│   └── text-utils.ts          # 文本处理工具
-└── test/
-    ├── inbound.test.ts
-    ├── outbound.test.ts
-    └── session.test.ts
+│   ├── channel.ts             # 主插件定义（新）
+│   ├── runtime.ts             # Runtime 管理（新）
+│   ├── types.ts               # 类型定义（新）
+│   ├── config-schema.ts      # 配置Schema（新）
+│   └── ...
+└── test/                      # 测试
 ```
+
+**注意**: 简化版本保留在 `index.ts` 中，作为 fallback
 
 ---
 
