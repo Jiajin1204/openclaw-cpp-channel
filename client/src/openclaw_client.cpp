@@ -1,10 +1,12 @@
 #include "openclaw_client.h"
+#include "simple_json.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <cstring>
-#include <errno.h>
 #include <iostream>
+
+using namespace simple_json;
 
 namespace openclaw {
 
@@ -14,6 +16,7 @@ std::unique_ptr<OpenClawClient> OpenClawClient::Create(const std::string& socket
 
 OpenClawClient::OpenClawClient(const std::string& socketPath)
     : socketPath_(socketPath), sockfd_(-1) {
+    disconnect();
 }
 
 OpenClawClient::~OpenClawClient() {
@@ -41,8 +44,6 @@ int OpenClawClient::connectToSocket() {
 }
 
 void OpenClawClient::connect(ConnectCallback callback) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     if (connected_) {
         if (callback) callback(true);
         return;
@@ -53,17 +54,15 @@ void OpenClawClient::connect(ConnectCallback callback) {
     
     if (success) {
         running_ = true;
-        readThread_ = std::thread(&OpenClawClient::startReadLoop, this);
+        startReadLoop();
     }
     
     if (callback) callback(success);
 }
 
 void OpenClawClient::disconnect() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     if (!connected_) {
-        return;  // 已经断开了
+        return;
     }
     
     running_ = false;
@@ -76,7 +75,7 @@ void OpenClawClient::disconnect() {
         sockfd_ = -1;
     }
     
-    // 然后等待线程结束
+    // 等待读取线程结束
     if (readThread_.joinable()) {
         readThread_.join();
     }
@@ -86,164 +85,136 @@ void OpenClawClient::disconnect() {
     }
 }
 
-bool OpenClawClient::sendMessage(const std::string& from, const std::string& text, int id) {
-    Message msg;
-    msg.type = "send";
-    msg.from = from;
-    msg.text = text;
-    msg.id = id;  // 使用传入的 ID
-    
-    return sendRaw(encodeMessage(msg));
-}
-
-bool OpenClawClient::sendPing() {
-    Message msg;
-    msg.type = "ping";
-    return sendRaw(encodeMessage(msg));
-}
-
 void OpenClawClient::startReadLoop() {
-    char buffer[4096];
-    
-    while (running_) {
-        ssize_t n = read(sockfd_, buffer, sizeof(buffer) - 1);
+    readThread_ = std::thread([this]() {
+        char buffer[4096];
         
-        if (n <= 0) {
-            // 连接断开
-            break;
-        }
-        
-        buffer[n] = '\0';
-        readBuffer_ += buffer;
-        
-        // 按行分割
-        size_t pos;
-        while ((pos = readBuffer_.find('\n')) != std::string::npos) {
-            std::string line = readBuffer_.substr(0, pos);
-            readBuffer_ = readBuffer_.substr(pos + 1);
+        while (running_ && sockfd_ >= 0) {
+            ssize_t n = read(sockfd_, buffer, sizeof(buffer) - 1);
             
-            if (!line.empty()) {
-                handleMessage(line);
+            if (n <= 0) {
+                if (running_) {
+                    connected_ = false;
+                    if (disconnectCallback_) {
+                        disconnectCallback_();
+                    }
+                }
+                break;
+            }
+            
+            buffer[n] = '\0';
+            readBuffer_ += buffer;
+            
+            // 按行分割处理
+            size_t pos;
+            while ((pos = readBuffer_.find('\n')) != std::string::npos) {
+                std::string line = readBuffer_.substr(0, pos);
+                readBuffer_ = readBuffer_.substr(pos + 1);
+                
+                if (!line.empty()) {
+                    handleMessage(line);
+                }
             }
         }
-    }
-    
-    // 连接断开
-    connected_ = false;
-    if (disconnectCallback_) {
-        disconnectCallback_();
-    }
+    });
 }
 
-void OpenClawClient::handleMessage(const std::string& json) {
+void OpenClawClient::handleMessage(const std::string& jsonStr) {
     try {
-        Message msg = parseMessage(json);
+        Json j = Json::parse(jsonStr);
+        std::string type = j.value("type", "");
         
-        if (msg.type == "reply" && messageCallback_) {
-            messageCallback_(msg.to, msg.text);
+        if (type == "reply" || type == "chunk") {
+            std::string to = j.value("to", "");
+            std::string text = j.value("text", "");
+            
+            if (type == "chunk" && chunkCallback_) {
+                chunkCallback_(to, text);
+            } else if (type == "reply" && messageCallback_) {
+                messageCallback_(to, text);
+            }
+        } else if (type == "done") {
+            std::string to = j.value("to", "");
+            if (doneCallback_) {
+                doneCallback_(to);
+            }
+        } else if (type == "ack") {
+            int id = j.value("id", 0);
+            if (ackCallback_) {
+                ackCallback_(id);
+            }
+        } else if (type == "pong") {
+            // 心跳回应
         }
-        // 其他类型处理: ack, pong 等
     } catch (const std::exception& e) {
-        std::cerr << "Parse message error: " << e.what() << std::endl;
+        std::cerr << "Failed to parse message: " << e.what() << std::endl;
     }
 }
 
 bool OpenClawClient::sendRaw(const std::string& data) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     if (!connected_ || sockfd_ < 0) {
         return false;
     }
     
+    std::lock_guard<std::mutex> lock(mutex_);
     ssize_t written = write(sockfd_, data.c_str(), data.length());
     return written == static_cast<ssize_t>(data.length());
 }
 
-std::string OpenClawClient::encodeMessage(const Message& msg) {
-    // 简单实现，实际可用 JSON 库
-    std::string json = "{\"type\":\"" + msg.type + "\"";
-    
-    if (!msg.from.empty()) {
-        json += ",\"from\":\"" + msg.from + "\"";
-    }
-    if (!msg.to.empty()) {
-        json += ",\"to\":\"" + msg.to + "\"";
-    }
-    if (!msg.text.empty()) {
-        json += ",\"text\":\"" + msg.text + "\"";
-    }
-    if (msg.id > 0) {
-        json += ",\"id\":" + std::to_string(msg.id);
+bool OpenClawClient::sendMessage(const std::string& from, const std::string& text, int id) {
+    if (!connected_ || sockfd_ < 0) {
+        return false;
     }
     
-    json += "}\n";
-    return json;
+    Json j = Json::object();
+    j["type"] = Json::string("send");
+    j["from"] = Json::string(from);
+    j["text"] = Json::string(text);
+    j["id"] = Json::number(id);
+    
+    std::string msg = j.dump() + "\n";
+    return sendRaw(msg);
 }
 
-OpenClawClient::Message OpenClawClient::parseMessage(const std::string& json) {
-    Message msg;
-    
-    // 简单解析，实际可用 JSON 库 (nlohmann/json)
-    // 格式: {"type":"xxx","from":"xxx","text":"xxx",...}
-    
-    // 提取 type
-    size_t typePos = json.find("\"type\":\"");
-    if (typePos != std::string::npos) {
-        size_t start = typePos + 8;
-        size_t end = json.find("\"", start);
-        if (end != std::string::npos) {
-            msg.type = json.substr(start, end - start);
-        }
+bool OpenClawClient::clearHistory(const std::string& from) {
+    if (!connected_ || sockfd_ < 0) {
+        return false;
     }
     
-    // 提取 from
-    size_t fromPos = json.find("\"from\":\"");
-    if (fromPos != std::string::npos) {
-        size_t start = fromPos + 8;
-        size_t end = json.find("\"", start);
-        if (end != std::string::npos) {
-            msg.from = json.substr(start, end - start);
-        }
+    Json j = Json::object();
+    j["type"] = Json::string("clear");
+    j["from"] = Json::string(from);
+    
+    std::string msg = j.dump() + "\n";
+    return sendRaw(msg);
+}
+
+bool OpenClawClient::sendPing() {
+    if (!connected_ || sockfd_ < 0) {
+        return false;
     }
     
-    // 提取 to
-    size_t toPos = json.find("\"to\":\"");
-    if (toPos != std::string::npos) {
-        size_t start = toPos + 6;
-        size_t end = json.find("\"", start);
-        if (end != std::string::npos) {
-            msg.to = json.substr(start, end - start);
-        }
-    }
+    Json j = Json::object();
+    j["type"] = Json::string("ping");
     
-    // 提取 text
-    size_t textPos = json.find("\"text\":\"");
-    if (textPos != std::string::npos) {
-        size_t start = textPos + 8;
-        size_t end = json.find("\"", start);
-        if (end != std::string::npos) {
-            msg.text = json.substr(start, end - start);
-        }
-    }
-    
-    // 提取 id
-    size_t idPos = json.find("\"id\":");
-    if (idPos != std::string::npos) {
-        size_t start = idPos + 5;
-        size_t end = json.find(",", start);
-        if (end == std::string::npos) {
-            end = json.find("}", start);
-        }
-        if (end != std::string::npos) {
-            msg.id = std::stoi(json.substr(start, end - start));
-        }
-    }
-    
-    return msg;
+    std::string msg = j.dump() + "\n";
+    return sendRaw(msg);
 }
 
 void OpenClawClient::onMessage(MessageCallback callback) {
     messageCallback_ = callback;
+}
+
+void OpenClawClient::onChunk(ChunkCallback callback) {
+    chunkCallback_ = callback;
+}
+
+void OpenClawClient::onDone(DoneCallback callback) {
+    doneCallback_ = callback;
+}
+
+void OpenClawClient::onAck(AckCallback callback) {
+    ackCallback_ = callback;
 }
 
 void OpenClawClient::onDisconnect(DisconnectCallback callback) {
