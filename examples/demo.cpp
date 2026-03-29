@@ -31,11 +31,14 @@ int main(int argc, char* argv[]) {
     // 捕获 Ctrl+C
     std::signal(SIGINT, signalHandler);
     
-    // 默认 socket 路径
-    std::string socketPath = "/tmp/openclaw.sock";
+    // 默认 socket 路径 (Android Termux)
+    std::string socketPath = "/data/data/com.termux/files/home/openclaw.sock";
     if (argc > 1) {
         socketPath = argv[1];
     }
+    
+    // 对于 Linux 测试，可以取消注释下面这行
+    // socketPath = "/tmp/openclaw.sock";
     
     std::cout << "OpenClaw C++ Client Demo" << std::endl;
     std::cout << "Socket: " << socketPath << std::endl;

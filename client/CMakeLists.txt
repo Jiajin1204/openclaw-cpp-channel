@@ -40,7 +40,7 @@ if(EXISTS ${ANDROID_NDK_ROOT})
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DANDROID -fPIC -ffunction-sections -fdata-sections")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Oz -fvisibility=hidden -fvisibility-inlines-hidden")
     
-    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -Wl,--gc-sections")
     
     message(STATUS "Android NDK configured for ABI: ${ANDROID_ABI}")
 else()
@@ -68,6 +68,12 @@ install(DIRECTORY include/
 option(BUILD_EXAMPLES "Build example programs" ON)
 
 if(BUILD_EXAMPLES)
+    # 聊天 demo (推荐)
+    add_executable(chat ../examples/chat.cpp)
+    target_link_libraries(chat openclaw_client)
+    target_compile_options(chat PRIVATE -Wall -Wextra)
+    
+    # 旧版菜单 demo (保留)
     add_executable(demo ../examples/demo.cpp)
     target_link_libraries(demo openclaw_client)
     target_compile_options(demo PRIVATE -Wall -Wextra)
