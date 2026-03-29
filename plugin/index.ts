@@ -8,16 +8,6 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/core";
 import { cppChannelPlugin } from "./src/channel.js";
 import { setCppChannelRuntime } from "./src/runtime.js";
-import type { CppChannelRuntime } from "./src/types.js";
-
-// Define the runtime initializer
-function setCppChannelRuntimeFromApi(runtime: CppChannelRuntime): void {
-  setCppChannelRuntime(runtime);
-}
-
-// Export the plugin
-export { cppChannelPlugin } from "./src/channel.js";
-export { setCppChannelRuntime, getCppChannelRuntime } from "./src/runtime.js";
 
 // Define the plugin entry for OpenClaw
 const cppChannelEntry = defineChannelPluginEntry({
@@ -25,7 +15,7 @@ const cppChannelEntry = defineChannelPluginEntry({
   name: "C++ Channel",
   description: "Unix Socket channel for C++ Native service integration",
   plugin: cppChannelPlugin,
-  setRuntime: setCppChannelRuntimeFromApi as any,
+  setRuntime: setCppChannelRuntime,
 });
 
 // Default export for OpenClaw plugin loading

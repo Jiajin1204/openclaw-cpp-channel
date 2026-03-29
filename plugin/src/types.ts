@@ -37,76 +37,31 @@ export interface CppChannelConfig {
   allowFrom?: string[];
 }
 
-export interface CppChannelFullConfig {
-  channels?: {
-    "cpp-channel"?: CppChannelConfig;
-  };
-}
-
 // ============================================================================
 // Runtime Types - For dispatchInboundDirectDmWithRuntime
 // ============================================================================
 
-export interface CppChannelDirectDmRuntime {
+export interface CppChannelRuntime {
+  config: {
+    loadConfig(): OpenClawConfig;
+  };
   channel: {
-    routing: {
-      resolveAgentRoute: (params: {
+    text: {
+      resolveMarkdownTableMode(params: {
         cfg: OpenClawConfig;
         channel: string;
         accountId: string;
-        peer: { kind: "direct"; id: string };
-      }) => {
-        channel: string;
-        accountId: string;
-        agentId?: string;
-        sessionKey: string;
-        threadId?: string;
-      };
+      }): "standard" | "github" | "none";
+      convertMarkdownTables(text: string, tableMode: string): string;
+    };
+    commands: DirectDmCommandAuthorizationRuntime;
+    routing: {
+      resolveAgentRoute(params: any): any;
     };
     session: {
-      resolveStorePath: (params: {
-        store?: string;
-        sessionKey: string;
-      }) => string;
-      readSessionUpdatedAt: (params: {
-        storePath: string;
-        sessionKey: string;
-      }) => number | undefined;
-      recordInboundSession: (params: {
-        storePath: string;
-        sessionKey: string;
-        messageId: string;
-        from: string;
-        body: string;
-        timestamp: number;
-      }) => Promise<void>;
+      resolveStorePath(params: any): string;
+      recordInboundSession(params: any): Promise<void>;
     };
-    reply: {
-      resolveEnvelopeFormatOptions: (cfg: OpenClawConfig) => {
-        preferBlockquote: boolean;
-        preferItalics: boolean;
-        preferCodeBlock: boolean;
-        preferDiff: boolean;
-      };
-      formatAgentEnvelope: (params: {
-        role: string;
-        body: string;
-        options?: any;
-      }) => { content?: string; reasoning?: string };
-      finalizeInboundContext: (params: any) => any;
-      dispatchReplyWithBufferedBlockDispatcher: (params: any) => Promise<void>;
-    };
-  };
-}
-
-// ============================================================================
-// Command Authorization Runtime
-// ============================================================================
-
-export function createCppChannelCommandRuntime(): DirectDmCommandAuthorizationRuntime {
-  return {
-    shouldComputeCommandAuthorized: () => false,
-    resolveCommandAuthorizedFromAuthorizers: () => false,
   };
 }
 

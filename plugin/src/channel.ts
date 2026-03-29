@@ -1,8 +1,8 @@
 /**
- * cpp-channel - Standard OpenClaw Channel Plugin (Simplified + Stable)
+ * cpp-channel - Standard OpenClaw Channel Plugin (Phase 3)
  * 
- * Phase 2: Standard interface with dispatchInboundDirectDmWithRuntime (experimental)
- * Current fallback: HTTP API approach for stability
+ * Implementing dispatchInboundDirectDmWithRuntime for OpenClaw session management.
+ * Phase 3: Integrate with OpenClaw's session system for proper history management.
  */
 
 import { createServer, type Socket } from "net";
@@ -11,9 +11,15 @@ import type { ChannelPlugin, ChannelMessageActionAdapter } from "openclaw/plugin
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
 import { createTopLevelChannelConfigAdapter } from "openclaw/plugin-sdk/channel-config-helpers";
 import { createComputedAccountStatusAdapter } from "openclaw/plugin-sdk/status-helpers";
+import { createDefaultChannelRuntimeState } from "openclaw/plugin-sdk/direct-dm";
+import {
+  dispatchInboundDirectDmWithRuntime,
+  resolveInboundDirectDmAccessWithRuntime,
+} from "openclaw/plugin-sdk/direct-dm";
+import type { DirectDmCommandAuthorizationRuntime } from "openclaw/plugin-sdk/direct-dm";
 
 import type { CppChannelConfig, CppInboundMessage } from "./types.js";
-import { setCppChannelRuntime, getCppChannelRuntime } from "./runtime.js";
+import { getCppChannelRuntime } from "./runtime.js";
 
 // ============================================================================
 // Constants
@@ -108,8 +114,7 @@ function isCppSenderAllowed(senderId: string, allowFrom: string[]): boolean {
   return false;
 }
 
-async function handleCppMessage(msg: CppInboundMessage, cfg: any) {
-  const accountId = resolveDefaultAccountId();
+async function handleCppMessage(msg: CppInboundMessage, cfg: any, accountId: string) {
   const senderId = msg.from || "unknown";
   const account = resolveAccount(cfg, accountId);
   
@@ -124,87 +129,98 @@ async function handleCppMessage(msg: CppInboundMessage, cfg: any) {
     return;
   }
   
+  // Get runtime
+  const runtime = getCppChannelRuntime();
+  
+  // Create command authorization runtime
+  const commandRuntime: DirectDmCommandAuthorizationRuntime = {
+    shouldComputeCommandAuthorized: () => false,
+    resolveCommandAuthorizedFromAuthorizers: () => false,
+  };
+  
+  // Resolve access policy
+  const resolvedAccess = await resolveInboundDirectDmAccessWithRuntime({
+    cfg,
+    channel: CHANNEL_ID,
+    accountId,
+    dmPolicy: account.config.dmPolicy,
+    allowFrom: account.config.allowFrom,
+    senderId,
+    rawBody: msg.text,
+    isSenderAllowed: isCppSenderAllowed,
+    runtime: commandRuntime,
+  });
+  
+  if (resolvedAccess.access.decision !== "allow") {
+    sendToSocket(senderId, "reply", `[Access blocked: ${resolvedAccess.access.reasonCode}]`);
+    return;
+  }
+  
   // Send acknowledgment immediately
   sendToSocket(senderId, "ack", undefined);
   
-  // Use HTTP API (current stable approach)
-  // TODO: Integrate dispatchInboundDirectDmWithRuntime for OpenClaw session management
+  // Stream setting
   const streamEnabled = resolveStreamEnabled(cfg);
-  const gatewayUrl = "http://127.0.0.1:18790";
-  const gatewayToken = cfg?.gateway?.auth?.token;
   
-  try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (gatewayToken) {
-      headers["Authorization"] = "Bearer " + gatewayToken;
-    }
-    
-    const response = await fetch(gatewayUrl + "/v1/chat/completions", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: "openclaw",
-        messages: [{ role: "user", content: msg.text }],
-        stream: streamEnabled,
-      }),
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      sendToSocket(senderId, "reply", `[Error: HTTP ${response.status}]`);
-      return;
-    }
-    
-    if (streamEnabled) {
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
+  // Dispatch to OpenClaw via standard channel interface with full session management
+  await dispatchInboundDirectDmWithRuntime({
+    cfg,
+    runtime: runtime as any,
+    channel: CHANNEL_ID,
+    channelLabel: "C++",
+    accountId,
+    peer: { kind: "direct", id: senderId },
+    senderId,
+    senderAddress: `cpp:${senderId}`,
+    recipientAddress: `cpp:default`,
+    conversationLabel: senderId,
+    rawBody: msg.text,
+    messageId: `cpp-${msg.id}-${Date.now()}`,
+    timestamp: Date.now(),
+    commandAuthorized: resolvedAccess.commandAuthorized,
+    deliver: async (payload: any) => {
+      const text = typeof payload === "object" && "text" in payload
+        ? String(payload.text ?? "")
+        : String(payload ?? "");
       
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
-          
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              const data = line.slice(6).trim();
-              if (data === "[DONE]" || !data) continue;
-              
-              try {
-                const parsed = JSON.parse(data);
-                if (parsed.choices?.[0]?.delta?.content) {
-                  const content = parsed.choices[0].delta.content;
-                  fullText += content;
-                  sendToSocket(senderId, "chunk", content);
-                }
-              } catch (e) {
-                // Ignore parse errors
-              }
-            }
-          }
+      if (!text.trim()) return;
+      
+      if (streamEnabled) {
+        // Stream each character
+        for (const char of text) {
+          sendToSocket(senderId, "chunk", char);
         }
-      }
-      
-      sendToSocket(senderId, "done");
-    } else {
-      const result = await response.json();
-      if (result.choices?.[0]?.message?.content) {
-        sendToSocket(senderId, "reply", result.choices[0].message.content);
+        sendToSocket(senderId, "done");
       } else {
-        sendToSocket(senderId, "reply", "[Empty response]");
+        sendToSocket(senderId, "reply", text);
       }
-    }
-  } catch (e) {
-    sendToSocket(senderId, "reply", `[Error: ${String(e)}]`);
-  }
+    },
+    onRecordError: (err) => {
+      // Error logging
+    },
+    onDispatchError: (err, info) => {
+      sendToSocket(senderId, "reply", `[Error: ${String(err)}]`);
+    },
+  });
 }
 
-function startSocketServer(cfg: any) {
+function loadConfig(): any {
+  const fs = require("fs");
+  const configPaths = [
+    "/data/data/com.termux/files/home/.openclaw/openclaw.json",
+    "/home/jason/.openclaw/openclaw.json",
+    process.env.OPENCLAW_DIR ? `${process.env.OPENCLAW_DIR}/openclaw.json` : null,
+  ].filter(Boolean);
+  
+  for (const p of configPaths) {
+    if (p && fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, "utf8"));
+    }
+  }
+  return {};
+}
+
+function startSocketServer(cfg: any, accountId: string) {
   const socketPath = resolveSocketPath(cfg);
   
   // Close existing server and socket
@@ -240,23 +256,7 @@ function startSocketServer(cfg: any) {
           const msg = JSON.parse(line) as CppInboundMessage;
           
           if (msg.type === "send") {
-            // Load config from openclaw.json
-            const fs = require("fs");
-            let cfg = {};
-            const configPaths = [
-              "/data/data/com.termux/files/home/.openclaw/openclaw.json",
-              "/home/jason/.openclaw/openclaw.json",
-              process.env.OPENCLAW_DIR ? `${process.env.OPENCLAW_DIR}/openclaw.json` : null,
-            ].filter(Boolean);
-            
-            for (const p of configPaths) {
-              if (p && fs.existsSync(p)) {
-                cfg = JSON.parse(fs.readFileSync(p, "utf8"));
-                break;
-              }
-            }
-            
-            await handleCppMessage(msg, cfg);
+            await handleCppMessage(msg, cfg, accountId);
           } else if (msg.type === "ping") {
             socket.write(JSON.stringify({ type: "pong" }) + "\n");
           }
@@ -355,7 +355,7 @@ export const cppChannelPlugin: ChannelPlugin = {
       const prevPath = resolveSocketPath(prevCfg);
       const nextPath = resolveSocketPath(nextCfg);
       if (prevPath !== nextPath) {
-        startSocketServer(nextCfg);
+        startSocketServer(nextCfg, DEFAULT_ACCOUNT_ID);
       }
     },
   },
@@ -395,18 +395,21 @@ export const cppChannelPlugin: ChannelPlugin = {
   gateway: {
     startAccount: async (ctx) => {
       const cfg = ctx.cfg;
-      ctx.log?.info(`[${ctx.account?.accountId ?? "default"}] Starting C++ Channel socket server`);
+      const accountId = ctx.account?.accountId ?? DEFAULT_ACCOUNT_ID;
+      ctx.log?.info(`[${accountId}] Starting C++ Channel socket server`);
       
-      // Initialize runtime (for future dispatchInboundDirectDmWithRuntime integration)
+      // Create default runtime for dispatchInboundDirectDmWithRuntime
+      const defaultRuntime = createDefaultChannelRuntimeState(accountId);
+      
+      // Initialize runtime with config loader
+      const { setCppChannelRuntime } = await import("./runtime.js");
       setCppChannelRuntime({
+        ...defaultRuntime,
         config: {
           loadConfig: () => ctx.cfg,
         },
         channel: {
-          text: {
-            resolveMarkdownTableMode: () => "standard",
-            convertMarkdownTables: (text) => text,
-          },
+          ...defaultRuntime.channel,
           commands: {
             shouldComputeCommandAuthorized: () => false,
             resolveCommandAuthorizedFromAuthorizers: () => false,
@@ -414,7 +417,7 @@ export const cppChannelPlugin: ChannelPlugin = {
         },
       } as any);
       
-      startSocketServer(cfg);
+      startSocketServer(cfg, accountId);
     },
   },
   

@@ -262,6 +262,46 @@ openclaw gateway start
 ./chat
 ```
 
+## 开发进度
+
+### Phase 1-2: 基础框架 ✅ (2026-03-29)
+
+- [x] 标准 ChannelPlugin 接口实现
+- [x] gateway.startAccount 启动 Socket 服务器
+- [x] messaging 接口（目标解析、路由）
+- [x] outbound.sendPayload 发送回复
+- [x] lifecycle 配置变更处理
+- [x] configSchema 配置支持
+- [x] status 状态报告
+- [x] 流式输出
+- [x] 短期记忆（简化版）
+
+### Phase 3: OpenClaw 会话集成 ⏳
+
+- [ ] dispatchInboundDirectDmWithRuntime 集成
+- [ ] 让 OpenClaw 自动管理会话历史
+- [ ] 享受 Token 压缩功能
+
+### 功能状态
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| Socket 通信 | ✅ | C++ ↔ Plugin 双向通信 |
+| 流式输出 | ✅ | 逐字显示 AI 回复 |
+| 短期记忆 | ✅ | 简化版（插件维护历史） |
+| 标准接口 | ✅ | ChannelPlugin 完整接口 |
+| DM 策略 | ✅ | open/pairing/allowlist/disabled |
+
+### 当前架构
+
+```
+C++ 客户端 → Unix Socket → cpp-channel 插件 → HTTP /v1/chat/completions → Gateway
+                                              ↓
+                    插件维护历史 ← 当前方案
+                                              ↓
+                    OpenClaw 会话系统 ← 目标方案（Phase 3）
+```
+
 ## 技术栈
 
 - **OpenClaw Plugin**: TypeScript
