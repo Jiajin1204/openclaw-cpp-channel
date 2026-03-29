@@ -28,8 +28,11 @@ Unix Domain Socket: /tmp/openclaw.sock (Ubuntu) 或 /data/data/com.termux/files/
 消息格式 (JSON + 换行分隔):
 - C++ -> OpenClaw: {"type":"send","from":"user123","text":"你好","id":1}
 - OpenClaw -> C++: {"type":"reply","to":"user123","text":"你好，我是 AI"}
+- 流式输出: {"type":"chunk","to":"user123","text":"逐"}
+- 流式完成: {"type":"done","to":"user123"}
 - 心跳: {"type":"ping"} / {"type":"pong"}
 - 确认: {"type":"ack","id":1}
+- 清除历史: {"type":"clear","from":"user123"}
 ```
 
 ### 架构
@@ -37,65 +40,86 @@ Unix Domain Socket: /tmp/openclaw.sock (Ubuntu) 或 /data/data/com.termux/files/
 ```
 ┌─────────────────┐        Unix Socket        ┌─────────────────┐
 │   C++ Native    │ ◄──────────────────────► │   OpenClaw      │
-│   Service       │    /tmp/openclaw.sock    │   Channel Plugin│
+│   Service       │    /tmp/openclaw.sock     │   Channel Plugin│
 └─────────────────┘                          └─────────────────┘
        │                                              │
-       │  sendMessage()                               │  HTTP /v1/chat/completions
-       │  onMessage()                                 │  cpp_send tool
+       │  sendMessage()                              │  HTTP /v1/chat/completions
+       │  onChunk() (流式)                           │  cpp_send tool
        ▼                                              ▼
     JSON 协议                                   OpenAI-compatible API
 ```
 
-## 项目结构
+## OpenClaw 插件系统
 
+### 插件加载机制
+
+OpenClaw 启动时扫描 `~/.openclaw/extensions/` 目录：
 ```
-openclaw-cpp-channel/
-├── plugin/                    # OpenClaw 插件
-│   ├── openclaw.plugin.json  # 插件清单
-│   ├── index.ts              # 入口（已实现）
-│   ├── package.json          # NPM 配置
-│   └── src/                  # 源码（可扩展）
-├── client/                   # C++ 客户端库
-│   ├── include/
-│   │   └── openclaw_client.h # 头文件
-│   ├── src/
-│   │   └── openclaw_client.cpp # 实现
-│   ├── CMakeLists.txt        # 构建配置
-│   └── build.sh              # 构建脚本
-├── examples/                 # 示例
-│   ├── demo.cpp              # 简单示例
-│   └── chat.cpp              # 交互式聊天客户端
-└── README.md                 # 使用说明
+1. 扫描 extensions/ 目录下的子目录（每个子目录是一个插件）
+           ↓
+2. 读取 openclaw.plugin.json（插件清单）
+           ↓
+3. 检查 openclaw.json 中的 plugins.entries
+           ↓
+4. 如果 enabled: true，就加载插件
+           ↓
+5. 调用 plugin.register(api)
 ```
 
-## 快速开始
+### 插件目录结构
 
-### 1. 编译 C++ 客户端
-
-```bash
-cd client
-mkdir -p build && cd build
-cmake ..
-make
+```
+~/.openclaw/extensions/
+└── cpp-channel/          ← 目录名（可自定义，方便识别）
+    ├── index.ts          ← 插件入口（必须）
+    └── openclaw.plugin.json  ← 插件清单（声明身份）
 ```
 
-### 2. 配置 OpenClaw
-
-在 `openclaw.json` 中添加：
+### 插件声明（openclaw.plugin.json）
 
 ```json
 {
-  "gateway": {
-    "auth": {
-      "mode": "token",
-      "token": "your-gateway-token"
-    },
-    "http": {
-      "endpoints": {
-        "chatCompletions": {
-          "enabled": true
-        }
-      }
+  "id": "cpp-channel",      ← 插件唯一标识
+  "name": "C++ Channel",
+  "version": "1.0.0",
+  "description": "Unix Socket channel for C++"
+}
+```
+
+### 插件入口（index.ts）
+
+```typescript
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+
+const plugin = {
+  id: "cpp-channel",         // 必须和 openclaw.plugin.json 中的 id 一致
+  name: "C++ Channel",
+  configSchema: emptyPluginConfigSchema(),
+  
+  register(api: OpenClawPluginApi) {
+    // api 提供：
+    // - api.logger      日志
+    // - api.config      配置
+    // - api.registerTool()  注册工具给 Agent 调用
+    
+    // 启动 Socket 服务器
+    // 监听消息
+    // ...
+  }
+};
+
+export default plugin;
+```
+
+### OpenClaw 配置（openclaw.json）
+
+```json
+{
+  "channels": {
+    "cpp-channel": {
+      "enabled": true,
+      "socketPath": "/tmp/openclaw.sock"
     }
   },
   "plugins": {
@@ -106,40 +130,119 @@ make
 }
 ```
 
-### 3. 运行
+### Channel Plugin 接口（完整定义）
+
+OpenClaw 的 Channel Plugin 是一个大型接口，包含很多可选功能：
+
+```typescript
+type ChannelPlugin = {
+  // 必须
+  id: ChannelId;
+  config: ChannelConfigAdapter;
+  
+  // 可选（按需实现）
+  setup?: ChannelSetupAdapter;
+  pairing?: ChannelPairingAdapter;
+  outbound?: ChannelOutboundAdapter;      // 发送消息
+  messaging?: ChannelMessagingAdapter;    // 接收消息
+  streaming?: ChannelStreamingAdapter;     // 流式输出
+  heartbeat?: ChannelHeartbeatAdapter;     // 心跳
+  groups?: ChannelGroupAdapter;            // 群组
+  agentTools?: ChannelAgentToolFactory;   // 代理工具
+  lifecycle?: ChannelLifecycleAdapter;    // 生命周期
+  // ...
+}
+```
+
+**cpp-channel 只实现了部分接口**：
+- `register()` - 插件入口
+- Unix Socket 监听 - 消息接收
+- HTTP 调用 - 消息发送
+- 流式输出 - SSE 解析
+
+### 配置说明
+
+| 配置位置 | 说明 |
+|----------|------|
+| `channels.cpp-channel` | 插件配置（Socket 路径等） |
+| `plugins.entries` | 告诉 OpenClaw 加载哪些插件 |
+| 其他（models、gateway.auth 等） | OpenClaw 自身配置，与插件无关 |
+
+## 项目结构
+
+```
+openclaw-cpp-channel/
+├── plugin/                    # OpenClaw 插件
+│   ├── openclaw.plugin.json  # 插件清单
+│   ├── index.ts              # 入口
+│   └── package.json
+├── client/                   # C++ 客户端库
+│   ├── include/
+│   │   ├── openclaw_client.h # 头文件
+│   │   └── simple_json.h     # JSON 库（单文件）
+│   ├── src/
+│   │   └── openclaw_client.cpp
+│   ├── CMakeLists.txt
+│   └── build.sh
+├── examples/                 # 示例
+│   ├── demo.cpp              # 简单示例
+│   └── chat.cpp              # 交互式聊天客户端
+├── docs/
+│   └── DEVELOPMENT_LOG.md    # 开发日记（不上传 GitHub）
+├── README.md                 # 使用说明
+└── PROJECT.md               # 项目文档
+```
+
+## 快速开始
+
+### 1. 安装插件
+
+```bash
+# 复制插件到 OpenClaw 扩展目录
+cp -r plugin ~/.openclaw/extensions/cpp-channel
+```
+
+### 2. 配置 OpenClaw
+
+在 `openclaw.json` 中添加：
+
+```json
+{
+  "channels": {
+    "cpp-channel": {
+      "enabled": true,
+      "socketPath": "/tmp/openclaw.sock"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "cpp-channel": { "enabled": true }
+    }
+  }
+}
+```
+
+### 3. 编译 C++ 客户端
+
+```bash
+cd client
+mkdir -p build && cd build
+cmake ..
+make
+
+# Android 交叉编译
+cmake .. -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a
+```
+
+### 4. 运行
 
 1. 启动 OpenClaw Gateway
 2. 运行 C++ 客户端：
    ```bash
-   ./bin/chat
+   ./chat                         # 正常模式
+   ./chat --debug                 # 调试模式（显示心跳）
+   ./chat /path/to/socket --debug  # 指定 Socket 路径
    ```
-
-## 开发状态
-
-### Phase 1: 插件开发（OpenClaw 侧）✅
-
-- [x] 创建插件框架
-- [x] 实现 Unix Socket Server
-- [x] 实现消息协议解析
-- [x] 调用 /v1/chat/completions API
-- [x] 实现 cpp_send 工具
-- [x] Termux 实机测试通过
-
-### Phase 2: C++ 客户端开发 ✅
-
-- [x] 头文件定义
-- [x] Socket 连接管理
-- [x] 消息发送/接收
-- [x] CMake 构建配置
-- [x] 示例程序 (demo.cpp, chat.cpp)
-- [x] NDK 交叉编译 (Android)
-
-### Phase 3: 验证测试 ✅
-
-- [x] Ubuntu 环境验证
-- [x] Termux 环境验证（Android）
-- [x] 双向通信测试
-- [ ] 性能测试
 
 ## 手机端配置（Termux）
 
@@ -151,7 +254,7 @@ npm install -g openclaw
 # 复制插件
 cp -r openclaw-cpp-channel/plugin ~/.openclaw/extensions/cpp-channel
 
-# 配置 openclaw.json
+# 配置 openclaw.json（参考上方配置）
 # 启动 Gateway
 openclaw gateway start
 
@@ -163,6 +266,7 @@ openclaw gateway start
 
 - **OpenClaw Plugin**: TypeScript
 - **C++ Client**: C++17, POSIX Socket API
+- **JSON**: simple_json（轻量级单头文件库）
 - **构建**: CMake, NDK (Android)
 - **测试平台**: Ubuntu + Termux (Android)
 
