@@ -6,6 +6,7 @@
 
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { ChannelPlugin } from "openclaw/plugin-sdk/core";
+import type { DirectDmCommandAuthorizationRuntime } from "openclaw/plugin-sdk/direct-dm";
 
 // ============================================================================
 // Account Types
@@ -20,6 +21,8 @@ export interface CppChannelAccount {
 export interface CppChannelAccountConfig {
   socketPath: string;
   stream: boolean;
+  dmPolicy: "open" | "pairing" | "allowlist" | "disabled";
+  allowFrom: string[];
 }
 
 // ============================================================================
@@ -41,39 +44,69 @@ export interface CppChannelFullConfig {
 }
 
 // ============================================================================
-// Runtime Types
+// Runtime Types - For dispatchInboundDirectDmWithRuntime
 // ============================================================================
 
-export interface CppChannelTextRuntime {
-  resolveMarkdownTableMode(params: {
-    cfg: OpenClawConfig;
-    channel: string;
-    accountId: string;
-  }): "standard" | "github" | "none";
-  
-  convertMarkdownTables(text: string, tableMode: string): string;
-}
-
-export interface CppChannelSocketRuntime {
-  sendToClient(clientId: string, text: string, mode: "single" | "streaming"): void;
-  broadcast(text: string): void;
-}
-
-export interface CppChannelRuntime {
-  config: {
-    loadConfig(): OpenClawConfig;
-  };
+export interface CppChannelDirectDmRuntime {
   channel: {
-    text: CppChannelTextRuntime;
-    cpp: CppChannelSocketRuntime;
-    commands: {
-      shouldComputeCommandAuthorized(rawBody: string, cfg: OpenClawConfig): boolean;
-      resolveCommandAuthorizedFromAuthorizers(params: {
-        useAccessGroups: boolean;
-        authorizers: Array<{ configured: boolean; allowed: boolean }>;
-        modeWhenAccessGroupsOff?: "allow" | "deny" | "configured";
-      }): boolean;
+    routing: {
+      resolveAgentRoute: (params: {
+        cfg: OpenClawConfig;
+        channel: string;
+        accountId: string;
+        peer: { kind: "direct"; id: string };
+      }) => {
+        channel: string;
+        accountId: string;
+        agentId?: string;
+        sessionKey: string;
+        threadId?: string;
+      };
     };
+    session: {
+      resolveStorePath: (params: {
+        store?: string;
+        sessionKey: string;
+      }) => string;
+      readSessionUpdatedAt: (params: {
+        storePath: string;
+        sessionKey: string;
+      }) => number | undefined;
+      recordInboundSession: (params: {
+        storePath: string;
+        sessionKey: string;
+        messageId: string;
+        from: string;
+        body: string;
+        timestamp: number;
+      }) => Promise<void>;
+    };
+    reply: {
+      resolveEnvelopeFormatOptions: (cfg: OpenClawConfig) => {
+        preferBlockquote: boolean;
+        preferItalics: boolean;
+        preferCodeBlock: boolean;
+        preferDiff: boolean;
+      };
+      formatAgentEnvelope: (params: {
+        role: string;
+        body: string;
+        options?: any;
+      }) => { content?: string; reasoning?: string };
+      finalizeInboundContext: (params: any) => any;
+      dispatchReplyWithBufferedBlockDispatcher: (params: any) => Promise<void>;
+    };
+  };
+}
+
+// ============================================================================
+// Command Authorization Runtime
+// ============================================================================
+
+export function createCppChannelCommandRuntime(): DirectDmCommandAuthorizationRuntime {
+  return {
+    shouldComputeCommandAuthorized: () => false,
+    resolveCommandAuthorizedFromAuthorizers: () => false,
   };
 }
 
@@ -111,9 +144,3 @@ export interface CppOutboundAck {
 }
 
 export type CppMessage = CppInboundMessage | CppOutboundChunk | CppOutboundReply | CppOutboundDone | CppOutboundAck;
-
-// ============================================================================
-// Plugin Types (for reference)
-// ============================================================================
-
-export type { ChannelPlugin };

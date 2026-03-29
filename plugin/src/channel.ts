@@ -1,8 +1,8 @@
 /**
- * cpp-channel - Standard OpenClaw Channel Plugin (Simplified)
+ * cpp-channel - Standard OpenClaw Channel Plugin (Simplified + Stable)
  * 
- * A channel plugin that enables communication with C++ Native services
- * via Unix Domain Socket. Using simplified interface without direct-dm dependency.
+ * Phase 2: Standard interface with dispatchInboundDirectDmWithRuntime (experimental)
+ * Current fallback: HTTP API approach for stability
  */
 
 import { createServer, type Socket } from "net";
@@ -13,6 +13,7 @@ import { createTopLevelChannelConfigAdapter } from "openclaw/plugin-sdk/channel-
 import { createComputedAccountStatusAdapter } from "openclaw/plugin-sdk/status-helpers";
 
 import type { CppChannelConfig, CppInboundMessage } from "./types.js";
+import { setCppChannelRuntime, getCppChannelRuntime } from "./runtime.js";
 
 // ============================================================================
 // Constants
@@ -91,9 +92,6 @@ let cppSocket: Socket | null = null;
 let messageBuffer = "";
 let server: ReturnType<typeof createServer> | null = null;
 
-let currentDeliverFn: ((text: string) => Promise<void>) | null = null;
-let currentSenderId: string = "unknown";
-
 function sendToSocket(to: string, type: string, text?: string) {
   if (!cppSocket) return;
   
@@ -126,14 +124,11 @@ async function handleCppMessage(msg: CppInboundMessage, cfg: any) {
     return;
   }
   
-  // Store context for outbound
-  currentSenderId = senderId;
-  
   // Send acknowledgment immediately
   sendToSocket(senderId, "ack", undefined);
   
-  // For now, use HTTP API directly
-  // TODO: Integrate with OpenClaw's session system via dispatchInboundDirectDmWithRuntime
+  // Use HTTP API (current stable approach)
+  // TODO: Integrate dispatchInboundDirectDmWithRuntime for OpenClaw session management
   const streamEnabled = resolveStreamEnabled(cfg);
   const gatewayUrl = "http://127.0.0.1:18790";
   const gatewayToken = cfg?.gateway?.auth?.token;
@@ -245,9 +240,22 @@ function startSocketServer(cfg: any) {
           const msg = JSON.parse(line) as CppInboundMessage;
           
           if (msg.type === "send") {
-            const cfg = require("fs").existsSync("/data/data/com.termux/files/home/.openclaw") 
-              ? require("/data/data/com.termux/files/home/.openclaw/openclaw.json") 
-              : {};
+            // Load config from openclaw.json
+            const fs = require("fs");
+            let cfg = {};
+            const configPaths = [
+              "/data/data/com.termux/files/home/.openclaw/openclaw.json",
+              "/home/jason/.openclaw/openclaw.json",
+              process.env.OPENCLAW_DIR ? `${process.env.OPENCLAW_DIR}/openclaw.json` : null,
+            ].filter(Boolean);
+            
+            for (const p of configPaths) {
+              if (p && fs.existsSync(p)) {
+                cfg = JSON.parse(fs.readFileSync(p, "utf8"));
+                break;
+              }
+            }
+            
             await handleCppMessage(msg, cfg);
           } else if (msg.type === "ping") {
             socket.write(JSON.stringify({ type: "pong" }) + "\n");
@@ -344,7 +352,6 @@ export const cppChannelPlugin: ChannelPlugin = {
   
   lifecycle: {
     onAccountConfigChanged: async ({ prevCfg, nextCfg }) => {
-      // Restart socket server if path changed
       const prevPath = resolveSocketPath(prevCfg);
       const nextPath = resolveSocketPath(nextCfg);
       if (prevPath !== nextPath) {
@@ -387,9 +394,26 @@ export const cppChannelPlugin: ChannelPlugin = {
   
   gateway: {
     startAccount: async (ctx) => {
-      // Start socket server when account starts
       const cfg = ctx.cfg;
       ctx.log?.info(`[${ctx.account?.accountId ?? "default"}] Starting C++ Channel socket server`);
+      
+      // Initialize runtime (for future dispatchInboundDirectDmWithRuntime integration)
+      setCppChannelRuntime({
+        config: {
+          loadConfig: () => ctx.cfg,
+        },
+        channel: {
+          text: {
+            resolveMarkdownTableMode: () => "standard",
+            convertMarkdownTables: (text) => text,
+          },
+          commands: {
+            shouldComputeCommandAuthorized: () => false,
+            resolveCommandAuthorizedFromAuthorizers: () => false,
+          },
+        },
+      } as any);
+      
       startSocketServer(cfg);
     },
   },
