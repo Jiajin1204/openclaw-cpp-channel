@@ -18,10 +18,17 @@ interface CppMessage {
   id?: number;
 }
 
+interface ConversationHistory {
+  messages: Array<{role: string, content: string}>;
+}
+
 let socketServer: ReturnType<typeof createServer> | null = null;
 let cppClient: any = null;
 let pluginConfig: CppChannelConfig | null = null;
 let apiInstance: OpenClawPluginApi | null = null;
+
+// 会话历史（每个用户一个会话）
+const conversationHistory = new Map<string, ConversationHistory>();
 
 function sendToCpp(obj: any) {
   if (cppClient) {
@@ -29,9 +36,26 @@ function sendToCpp(obj: any) {
   }
 }
 
+function getHistory(userId: string): Array<{role: string, content: string}> {
+  if (!conversationHistory.has(userId)) {
+    conversationHistory.set(userId, { messages: [] });
+  }
+  return conversationHistory.get(userId)!.messages;
+}
+
+function addToHistory(userId: string, role: string, content: string) {
+  const history = getHistory(userId);
+  history.push({ role, content });
+  // 限制历史长度，避免超出上下文
+  if (history.length > 20) {
+    history.shift();
+  }
+}
+
 async function handleCppMessage(msg: CppMessage, api: OpenClawPluginApi) {
   if (msg.type === "send") {
-    api.logger.info("Received from C++: " + msg.from + " - " + msg.text);
+    const userId = msg.from || "android_user";
+    api.logger.info("Received from C++: " + userId + " - " + msg.text);
     
     const gatewayUrl = pluginConfig?.gatewayUrl || "http://127.0.0.1:18790";
     const gatewayToken = pluginConfig?.gatewayToken;
@@ -45,14 +69,16 @@ async function handleCppMessage(msg: CppMessage, api: OpenClawPluginApi) {
         headers["Authorization"] = "Bearer " + gatewayToken;
       }
       
+      // 构建消息列表，包含历史
+      const history = getHistory(userId);
+      const messages = [...history, {role: "user", content: msg.text}];
+      
       const response = await fetch(gatewayUrl + "/v1/chat/completions", {
         method: "POST",
         headers: headers,
         body: JSON.stringify({
           model: "openclaw",
-          messages: [
-            {"role": "user", "content": msg.text}
-          ],
+          messages: messages,
         }),
       });
       
@@ -62,23 +88,34 @@ async function handleCppMessage(msg: CppMessage, api: OpenClawPluginApi) {
         
         if (result.choices && result.choices[0] && result.choices[0].message) {
           const replyText = result.choices[0].message.content;
-          sendToCpp({ type: "reply", to: msg.from, text: replyText });
+          
+          // 保存到历史记录
+          addToHistory(userId, "user", msg.text);
+          addToHistory(userId, "assistant", replyText);
+          
+          sendToCpp({ type: "reply", to: userId, text: replyText });
         } else {
-          sendToCpp({ type: "reply", to: msg.from, text: "[回复] " + JSON.stringify(result) });
+          sendToCpp({ type: "reply", to: userId, text: "[回复] " + JSON.stringify(result) });
         }
       } else {
         const errorText = await response.text();
         api.logger.warn("HTTP " + response.status + ": " + errorText);
-        sendToCpp({ type: "reply", to: msg.from, text: "[错误] HTTP " + response.status });
+        sendToCpp({ type: "reply", to: userId, text: "[错误] HTTP " + response.status });
       }
     } catch (e) {
       api.logger.error("Failed to send to Gateway:", e);
-      sendToCpp({ type: "reply", to: msg.from, text: "[错误] " + String(e) });
+      sendToCpp({ type: "reply", to: userId, text: "[错误] " + String(e) });
     }
     
     sendToCpp({ type: "ack", id: msg.id });
   } else if (msg.type === "ping") {
     sendToCpp({ type: "pong" });
+  } else if (msg.type === "clear") {
+    // 清除历史
+    const userId = msg.from || "android_user";
+    conversationHistory.delete(userId);
+    api.logger.info("Cleared history for: " + userId);
+    sendToCpp({ type: "ack", id: msg.id });
   }
 }
 
