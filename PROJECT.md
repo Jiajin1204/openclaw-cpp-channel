@@ -12,7 +12,19 @@ cpp-channel 是一个标准的 OpenClaw Channel Plugin，通过 Unix Domain Sock
 
 ## 当前状态 (2026-03-29 晚)
 
-### 🔴 遇到问题：handleInboundMessage 调用后无响应
+## 🔴 最新发现：JSON 解析失败
+
+**日志证据**：
+```
+[cpp-channel] Failed to parse message: SyntaxError: Bad control character in string literal in JSON at position 38 (line 1 column 39)
+```
+
+**原因**：C++ 客户端发送的 JSON 消息包含控制字符（可能是 `\r` 或其他不可见字符），导致 JSON.parse 失败。
+
+**下一步**：
+1. 检查 C++ 客户端发送消息时是否正确处理了特殊字符
+2. 在插件端增加更健壮的 JSON 解析（忽略控制字符）
+3. 或者在 C++ 端确保消息格式正确
 
 **现象**：C++ 客户端发送消息后，AI 回复为空（没有任何输出）。
 
