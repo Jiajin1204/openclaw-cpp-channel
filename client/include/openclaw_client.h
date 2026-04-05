@@ -112,14 +112,14 @@ public:
     bool isConnected() const;
     
 private:
-    explicit OpenClawClient(const std::string& socketPath);
+    explicit OpenClawClient(const std::string& address);
     
     int connectToSocket();
     void startReadLoop();
     void handleMessage(const std::string& json);
     bool sendRaw(const std::string& data);
     
-    std::string socketPath_;
+    std::string address_;  // Unix socket path or TCP host:port
     int sockfd_ = -1;
     std::mutex mutex_;
     std::thread readThread_;

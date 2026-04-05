@@ -225,4 +225,35 @@ sshpass -p qazwsx ssh ... "curl -s -X POST http://127.0.0.1:18790/v1/chat/comple
 
 ---
 
-_最后更新: 2026-03-29_
+## 2026-04-04 - 核心功能跑通
+
+### 进展
+- **架构升级**: 从 HTTP API 升级为 OpenClaw Channel Plugin
+- **Runtime 获取**: 发现应该用 `ctx.channelRuntime` 而非 `ctx.runtime`
+- **通信验证**: 用 socat 测试确认消息能成功发送到 Agent 并收到回复
+
+### Bug 修复
+- `runtime.reply.dispatchReplyWithBufferedBlockDispatcher` - 正确的消息分发 API
+- `runtime.outbound` 只有 `loadAdapter` 方法，不能直接发送消息
+
+### 核心功能验证
+```bash
+# 用 socat 测试成功
+{"type":"send","from":"android_user","text":"你好","id":1}
+# 回复:
+{"type":"ack","to":"android_user","content":1}
+{"type":"reply","to":"android_user","content":"I didn't receive any text in your message..."}
+```
+
+### 当前问题
+- chat 程序发完消息立即断开，Agent 处理需要时间
+- 需要修改 chat 程序保持连接等待回复
+
+### 2026-04-04 晚 - 问题排查
+- **现象**: Agent 收到消息但返回 "I didn't receive any text"
+- **可能原因**: `ctxPayload.body` / `ctxPayload.bodyForAgent` 未正确传递
+- **下一步**: 检查 `finalizeInboundContext` 的参数是否正确
+
+---
+
+_最后更新: 2026-04-04 晚_

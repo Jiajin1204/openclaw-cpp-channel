@@ -2,20 +2,22 @@
 #include "simple_json.h"
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <cstring>
 #include <iostream>
+#include <regex>
 
 using namespace simple_json;
 
 namespace openclaw {
 
-std::unique_ptr<OpenClawClient> OpenClawClient::Create(const std::string& socketPath) {
-    return std::unique_ptr<OpenClawClient>(new OpenClawClient(socketPath));
+std::unique_ptr<OpenClawClient> OpenClawClient::Create(const std::string& address) {
+    return std::unique_ptr<OpenClawClient>(new OpenClawClient(address));
 }
 
-OpenClawClient::OpenClawClient(const std::string& socketPath)
-    : socketPath_(socketPath), sockfd_(-1) {
+OpenClawClient::OpenClawClient(const std::string& address)
+    : address_(address), sockfd_(-1) {
     disconnect();
 }
 
@@ -24,20 +26,70 @@ OpenClawClient::~OpenClawClient() {
 }
 
 int OpenClawClient::connectToSocket() {
-    sockfd_ = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sockfd_ < 0) {
-        return -1;
-    }
+    // 判断是 Unix socket 还是 TCP
+    // Unix socket: 以 / 开头
+    // TCP: host:port 格式
     
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, socketPath_.c_str(), sizeof(addr.sun_path) - 1);
-    
-    if (::connect(sockfd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        close(sockfd_);
-        sockfd_ = -1;
-        return -1;
+    if (address_.find('/') == 0) {
+        // Unix socket
+        sockfd_ = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sockfd_ < 0) {
+            return -1;
+        }
+        
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, address_.c_str(), sizeof(addr.sun_path) - 1);
+        
+        if (::connect(sockfd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+            close(sockfd_);
+            sockfd_ = -1;
+            return -1;
+        }
+    } else {
+        // TCP: host:port
+        // 解析地址
+        std::string host = "127.0.0.1";
+        int port = 8022;
+        
+        size_t colonPos = address_.rfind(':');
+        if (colonPos != std::string::npos) {
+            host = address_.substr(0, colonPos);
+            port = std::stoi(address_.substr(colonPos + 1));
+        } else {
+            // 尝试解析为 port only
+            try {
+                port = std::stoi(address_);
+            } catch (...) {
+                port = 8022;
+            }
+        }
+        
+        sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd_ < 0) {
+            return -1;
+        }
+        
+        struct sockaddr_in serverAddr;
+        memset(&serverAddr, 0, sizeof(serverAddr));
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons(port);
+        
+        // 解析 host
+        struct hostent* he = gethostbyname(host.c_str());
+        if (!he) {
+            close(sockfd_);
+            sockfd_ = -1;
+            return -1;
+        }
+        memcpy(&serverAddr.sin_addr, he->h_addr_list[0], he->h_length);
+        
+        if (::connect(sockfd_, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+            close(sockfd_);
+            sockfd_ = -1;
+            return -1;
+        }
     }
     
     return 0;

@@ -12,6 +12,11 @@
         "default": "/tmp/openclaw.sock",
         "description": "Unix socket path for C++ client connection"
       },
+      "tcpPort": {
+        "type": "number",
+        "default": 8022,
+        "description": "TCP port for C++ client connection (overrides socketPath)"
+      },
       "httpPort": {
         "type": "number",
         "default": 18999,

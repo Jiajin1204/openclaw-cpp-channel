@@ -5,12 +5,19 @@
  * Uses OpenClaw's createPluginRuntimeStore for standard runtime management.
  */
 
-import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
-import type { CppChannelRuntime } from "./types.js";
+// We store the channelRuntime directly during startAccount
+// This is different from createPluginRuntimeStore which has different content
+let cppChannelRuntime: any = null;
+let cppChannelReady = false;
 
-// Create standard OpenClaw runtime store
-const { setRuntime: setCppChannelRuntime, getRuntime: getCppChannelRuntime } =
-  createPluginRuntimeStore<CppChannelRuntime>("CppChannel runtime not initialized");
+function setCppChannelRuntime(runtime: any) {
+  cppChannelRuntime = runtime;
+  cppChannelReady = true;
+  console.log("[cpp-channel] Runtime ready, keys:", Object.keys(runtime));
+}
+
+function getCppChannelRuntime() {
+  return cppChannelRuntime;
+}
 
 export { getCppChannelRuntime, setCppChannelRuntime };
-export type { CppChannelRuntime } from "./types.js";

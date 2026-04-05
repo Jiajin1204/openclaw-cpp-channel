@@ -31,6 +31,7 @@ using namespace openclaw;
 std::atomic<bool> running(true);
 std::atomic<bool> connected(false);
 std::atomic<bool> debugMode(false);
+std::atomic<bool> waitingForReply(false);  // 是否正在等待回复
 std::mutex printMutex;
 
 // 流式输出相关
@@ -87,7 +88,7 @@ void heartbeatThread(OpenClawClient* client) {
 int main(int argc, char* argv[]) {
     // 解析参数
     bool showDebug = false;
-    std::string socketPath = "/data/data/com.termux/files/home/openclaw.sock";
+    std::string socketPath = "127.0.0.1:8022";
     
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--debug") == 0 || strcmp(argv[i], "-d") == 0) {
@@ -99,7 +100,7 @@ int main(int argc, char* argv[]) {
             std::cout << "  --debug, -d    显示调试信息（心跳等）" << std::endl;
             std::cout << "  --help, -h     显示帮助信息" << std::endl;
             std::cout << "参数:" << std::endl;
-            std::cout << "  socket_path    Unix socket 路径（默认: /data/data/com.termux/files/home/openclaw.sock）" << std::endl;
+            std::cout << "  socket_path    TCP host:port (默认: 192.168.1.100:8022)" << std::endl;
             return 0;
         } else {
             socketPath = argv[i];
@@ -133,6 +134,7 @@ int main(int argc, char* argv[]) {
     // 设置流式输出完成回调
     client->onDone([](const std::string& to) {
         finishReply();
+        waitingForReply = false;  // 回复完成，解除等待
     });
     
     // 设置消息回调 (非流式时的回复)
@@ -260,8 +262,30 @@ int main(int argc, char* argv[]) {
         // 发送消息
         const std::string userId = "android_user";
         
+        // 等待上一条回复完成
+        if (waitingForReply) {
+            std::cout << "[系统] 等待上一条回复完成..." << std::endl;
+            while (waitingForReply && running) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+        }
+        
         if (client->sendMessage(userId, input)) {
             if (debugMode) std::cout << "[已发送] " << input << std::endl;
+            // 标记正在等待回复
+            waitingForReply = true;
+            
+            // 等待回复完成（最多等待 60 秒）
+            int waitCount = 0;
+            while (waitingForReply && running && waitCount < 600) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                waitCount++;
+            }
+            
+            if (waitingForReply && running) {
+                std::cout << "[系统] 等待回复超时" << std::endl;
+            }
+            waitingForReply = false;
         } else {
             if (debugMode) std::cout << "[错误] 消息发送失败" << std::endl;
         }
