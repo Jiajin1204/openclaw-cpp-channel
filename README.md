@@ -37,12 +37,11 @@
 ### Linux 编译
 
 ```bash
-cd client
 mkdir -p build && cd build
 cmake ..
 make -j4
 
-# 可执行文件位于 build/bin/chat
+# 可执行文件位于 build/bin/openclaw-chat
 ```
 
 ### Android 编译（交叉编译）
@@ -51,17 +50,15 @@ make -j4
 # 设置 NDK 路径
 export ANDROID_NDK=$HOME/android-ndk-r27d/android-ndk-r27d
 
-cd client
 mkdir -p build && cd build
 cmake .. \
-    -DBUILD_EXAMPLES=ON \
     -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
     -DANDROID_ABI=arm64-v8a \
     -DANDROID_PLATFORM=android-24
 
 make -j4
 
-# 可执行文件位于 build/bin/chat
+# 可执行文件位于 build/bin/openclaw-chat
 ```
 
 ### 交叉编译说明
@@ -171,17 +168,11 @@ openclaw gateway start --port 18790
 
 ```bash
 # 基本用法
-./chat
+./openclaw-chat /tmp/openclaw.sock
 
-# 指定 Socket 路径
-./chat /tmp/openclaw.sock
-
-# 调试模式（显示心跳和系统消息）
-./chat --debug
-./chat /tmp/openclaw.sock --debug
-
-# 查看帮助
-./chat --help
+# 或通过环境变量指定 Socket 路径
+export OPENCLAW_SOCKET=/tmp/openclaw.sock
+./openclaw-chat
 ```
 
 ## 通信协议
